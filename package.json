@@ -1,0 +1,11 @@
+{
+  "name": "healthcare-app",
+  "version": "1.0.0",
+  "description": "Healthcare Products Web App with AI-powered search and chatbot",
+  "scripts": {
+    "backend": "npm run start:dev --prefix backend",
+    "frontend": "npm run dev --prefix frontend",
+    "seed": "npm run seed --prefix backend",
+    "install:all": "npm install --prefix backend && npm install --prefix frontend"
+  }
+}
