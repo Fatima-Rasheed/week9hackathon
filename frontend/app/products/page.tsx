@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Search,
@@ -20,7 +20,8 @@ import Navbar from '@/components/Navbar';
 
 type SearchMode = 'normal' | 'ai';
 
-export default function ProductsPage() {
+// ─── Main content separated so useSearchParams works inside Suspense ──────────
+function ProductsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const initialHighlightId = searchParams.get('highlight');
@@ -67,18 +68,15 @@ export default function ProductsPage() {
     }
   }, [highlightId, loading]);
 
-  // Clear highlight when clicking outside the highlighted product
+  // Clear highlight when clicking outside
   useEffect(() => {
     if (!highlightId) return;
-
     const handleClick = (e: MouseEvent) => {
       if (highlightRef.current && !highlightRef.current.contains(e.target as Node)) {
         setHighlightId(null);
-        // Clean up the URL param without a full navigation
         router.replace('/products', { scroll: false });
       }
     };
-
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
   }, [highlightId, router]);
@@ -86,14 +84,11 @@ export default function ProductsPage() {
   // Normal search with debounce
   useEffect(() => {
     if (searchMode !== 'normal') return;
-
     if (debounceRef.current) clearTimeout(debounceRef.current);
-
     if (!query.trim()) {
       setSearchResult(null);
       return;
     }
-
     debounceRef.current = setTimeout(async () => {
       setSearchLoading(true);
       try {
@@ -105,7 +100,6 @@ export default function ProductsPage() {
         setSearchLoading(false);
       }
     }, 400);
-
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -126,9 +120,7 @@ export default function ProductsPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && searchMode === 'ai') {
-      handleAiSearch();
-    }
+    if (e.key === 'Enter' && searchMode === 'ai') handleAiSearch();
   };
 
   const clearSearch = () => {
@@ -137,12 +129,9 @@ export default function ProductsPage() {
     setError('');
   };
 
-  // Determine displayed products
   const displayedProducts = searchResult
     ? searchResult.products
-    : products.filter(
-        (p) => selectedCategory === 'All' || p.category === selectedCategory,
-      );
+    : products.filter((p) => selectedCategory === 'All' || p.category === selectedCategory);
 
   const isAiResult = searchResult?.searchType === 'ai';
 
@@ -153,13 +142,11 @@ export default function ProductsPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Hero Banner */}
         <div className="relative mb-8 rounded-2xl overflow-hidden bg-gradient-to-br from-red-600 via-red-500 to-rose-400 shadow-lg shadow-red-200">
-          {/* Background decorative circles */}
           <div className="absolute -top-10 -right-10 w-56 h-56 bg-white/10 rounded-full" />
           <div className="absolute -bottom-12 -left-8 w-44 h-44 bg-white/10 rounded-full" />
           <div className="absolute top-4 right-32 w-20 h-20 bg-white/10 rounded-full" />
 
           <div className="relative px-6 py-8 sm:px-10 sm:py-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-            {/* Left: text */}
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <span className="bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full tracking-wide uppercase">
@@ -176,7 +163,6 @@ export default function ProductsPage() {
               </p>
             </div>
 
-            {/* Right: stats */}
             {!loading && (
               <div className="flex items-center gap-3 shrink-0">
                 <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-5 py-4 text-center border border-white/30">
@@ -198,7 +184,6 @@ export default function ProductsPage() {
 
         {/* Search Bar */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-          {/* Mode Toggle */}
           <div className="flex items-center gap-2 mb-4">
             <span className="text-sm font-medium text-gray-600">Search mode:</span>
             <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
@@ -232,7 +217,6 @@ export default function ProductsPage() {
             )}
           </div>
 
-          {/* Search Input */}
           <div className="flex gap-3">
             <div className="flex-1 relative">
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2">
@@ -284,7 +268,7 @@ export default function ProductsPage() {
 
         {/* AI Search Result Banner */}
         {isAiResult && searchResult && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl animate-fade-in">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 bg-red-500 rounded-lg flex items-center justify-center shrink-0">
                 <Brain className="w-4 h-4 text-white" />
@@ -309,7 +293,7 @@ export default function ProductsPage() {
           </div>
         )}
 
-        {/* Category Filter (only when not searching) */}
+        {/* Category Filter */}
         {!searchResult && (
           <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
             <SlidersHorizontal className="w-4 h-4 text-gray-400 shrink-0" />
@@ -392,8 +376,23 @@ export default function ProductsPage() {
         )}
       </main>
 
-      {/* AI Chatbot */}
       <ChatBot />
     </div>
+  );
+}
+
+// ─── Suspense wrapper — useSearchParams ke liye zaroor ────────────────────────
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-10 h-10 text-red-500 animate-spin mx-auto mb-3" />
+          <p className="text-gray-500">Loading...</p>
+        </div>
+      </div>
+    }>
+      <ProductsContent />
+    </Suspense>
   );
 }

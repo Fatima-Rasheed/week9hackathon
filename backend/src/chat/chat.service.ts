@@ -259,37 +259,37 @@ ${productContext}`,
   }
 
   // ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
-// ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
-async transcribeAudio(file: Express.Multer.File): Promise<TranscriptionResponse> {
-  try {
-    const transcription = await this.groq.audio.transcriptions.create({
-      file: fs.createReadStream(file.path),
-      model: 'whisper-large-v3',
-      response_format: 'json',
-      language: 'en',
-    });
+  async transcribeAudio(file: Express.Multer.File): Promise<TranscriptionResponse> {
+    try {
+      // memoryStorage use kar raha hai — buffer se File banao (Vercel compatible)
+     const audioBlob = new Blob([Buffer.from(file.buffer)], { type: file.mimetype });
 
-    const transcribedText = transcription.text?.trim();
+      const audioFile = new File([audioBlob], file.originalname, { type: file.mimetype });
 
-    // ── Sirf save karo agar text empty nahi hai ──
-    if (transcribedText) {
-      await this.voiceQueryModel.create({
-        transcribedText,
-        inputType: 'voice',
+      const transcription = await this.groq.audio.transcriptions.create({
+        file: audioFile,
+        model: 'whisper-large-v3',
+        response_format: 'json',
+        language: 'en',
       });
+
+      const transcribedText = transcription.text?.trim();
+
+      // Sirf save karo agar text empty nahi hai
+      if (transcribedText) {
+        await this.voiceQueryModel.create({
+          transcribedText,
+          inputType: 'voice',
+        });
+      }
+
+      // No cleanup needed — memory auto-clear hoti hai
+      return { text: transcribedText || '' };
+    } catch (error) {
+      console.error('Transcription error:', error);
+      throw new Error('Failed to transcribe audio. Please try again.');
     }
-
-    fs.unlink(file.path, (err) => {
-      if (err) console.error('Failed to delete audio file:', err);
-    });
-
-    return { text: transcribedText || '' };
-  } catch (error) {
-    console.error('Transcription error:', error);
-    if (file?.path) fs.unlink(file.path, () => {});
-    throw new Error('Failed to transcribe audio. Please try again.');
   }
-}
 
   // ─── General Chat ─────────────────────────────────────────────────────────────
   async chat(chatDto: ChatDto): Promise<ChatResponse> {
