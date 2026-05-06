@@ -24,8 +24,6 @@ type SearchMode = 'normal' | 'ai';
 function ProductsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initialHighlightId = searchParams.get('highlight');
-
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -35,7 +33,15 @@ function ProductsContent() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [categories, setCategories] = useState<string[]>(['All']);
   const [error, setError] = useState('');
-  const [highlightId, setHighlightId] = useState<string | null>(initialHighlightId);
+  const [highlightId, setHighlightId] = useState<string | null>(searchParams.get('highlight'));
+
+  // Keep highlightId in sync whenever the URL search params change (e.g. navigating
+  // from the chatbot "View" button while already on the products page)
+  useEffect(() => {
+    const id = searchParams.get('highlight');
+    setHighlightId(id);
+  }, [searchParams]);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
