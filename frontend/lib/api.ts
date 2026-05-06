@@ -1,7 +1,8 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+// Use relative URL - Next.js rewrite will proxy to localhost:3001
+const API_URL = '/api';
 
 const api = axios.create({
   baseURL: API_URL,

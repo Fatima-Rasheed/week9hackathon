@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import Groq from 'groq-sdk';
+import * as fs from 'fs';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
+import { VoiceQuery,VoiceQueryDocument } from './voice-query.schema';
 import { ChatDto } from './dto/chat.dto';
 
 interface SuggestedProduct {
@@ -22,12 +24,17 @@ export interface ChatResponse {
   intent: string;
 }
 
+export interface TranscriptionResponse {
+  text: string;
+}
+
 @Injectable()
 export class ChatService {
   private groq: Groq;
 
   constructor(
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
+    @InjectModel(VoiceQuery.name) private voiceQueryModel: Model<VoiceQueryDocument>,
     private configService: ConfigService,
   ) {
     this.groq = new Groq({
@@ -35,6 +42,41 @@ export class ChatService {
     });
   }
 
+  // ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
+  async transcribeAudio(file: Express.Multer.File): Promise<TranscriptionResponse> {
+    try {
+      const transcription = await this.groq.audio.transcriptions.create({
+        file: fs.createReadStream(file.path),
+        model: 'whisper-large-v3',
+        response_format: 'json',
+        language: 'en', // Change to 'ur' for Urdu, or remove for auto-detect
+      });
+
+      // Save voice query to MongoDB for analytics
+      await this.voiceQueryModel.create({
+        transcribedText: transcription.text,
+        inputType: 'voice',
+      });
+
+      // Clean up uploaded file after transcription
+      fs.unlink(file.path, (err) => {
+        if (err) console.error('Failed to delete audio file:', err);
+      });
+
+      return { text: transcription.text };
+    } catch (error) {
+      console.error('Transcription error:', error);
+
+      // Clean up file even on error
+      if (file?.path) {
+        fs.unlink(file.path, () => {});
+      }
+
+      throw new Error('Failed to transcribe audio. Please try again.');
+    }
+  }
+
+  // ─── Chat ─────────────────────────────────────────────────────────────────────
   async chat(chatDto: ChatDto): Promise<ChatResponse> {
     const { message, history = [] } = chatDto;
 
@@ -80,7 +122,7 @@ export class ChatService {
     }
   }
 
-  // LangGraph Node 1: Intent Classification
+  // ─── LangGraph Node 1: Intent Classification ──────────────────────────────────
   private async classifyIntent(message: string): Promise<{
     isProductQuery: boolean;
     intent: string;
@@ -115,7 +157,7 @@ export class ChatService {
     }
   }
 
-  // LangGraph Node 2: Product Retrieval
+  // ─── LangGraph Node 2: Product Retrieval ──────────────────────────────────────
   private async fetchRelevantProducts(keywords: string[]): Promise<ProductDocument[]> {
     const regexPatterns = keywords.map((kw) => new RegExp(kw, 'i'));
 
@@ -133,7 +175,7 @@ export class ChatService {
       .exec();
   }
 
-  // LangGraph Node 3: Response Generation
+  // ─── LangGraph Node 3: Response Generation ────────────────────────────────────
   private async generateResponse(
     message: string,
     history: { role: string; content: string }[],

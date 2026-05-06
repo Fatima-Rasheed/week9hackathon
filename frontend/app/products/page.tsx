@@ -118,28 +118,49 @@ export default function ProductsPage() {
       <Navbar />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Hero section */}
-        <div className="mb-8 flex items-end justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">
-              Healthcare Products
-            </h1>
-            <p className="text-gray-500">
-              {loading ? 'Loading...' : `${products.length} premium products for your wellness`}
-            </p>
-          </div>
-          {!loading && (
-            <div className="hidden sm:flex items-center gap-4 text-center">
-              <div className="bg-white rounded-xl px-4 py-2 border border-gray-100 shadow-sm">
-                <p className="text-lg font-bold text-red-600">{products.length}</p>
-                <p className="text-xs text-gray-400">Products</p>
+        {/* Hero Banner */}
+        <div className="relative mb-8 rounded-2xl overflow-hidden bg-gradient-to-br from-red-600 via-red-500 to-rose-400 shadow-lg shadow-red-200">
+          {/* Background decorative circles */}
+          <div className="absolute -top-10 -right-10 w-56 h-56 bg-white/10 rounded-full" />
+          <div className="absolute -bottom-12 -left-8 w-44 h-44 bg-white/10 rounded-full" />
+          <div className="absolute top-4 right-32 w-20 h-20 bg-white/10 rounded-full" />
+
+          <div className="relative px-6 py-8 sm:px-10 sm:py-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+            {/* Left: text */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full tracking-wide uppercase">
+                  🏥 Trusted Healthcare
+                </span>
               </div>
-              <div className="bg-white rounded-xl px-4 py-2 border border-gray-100 shadow-sm">
-                <p className="text-lg font-bold text-red-600">{categories.length - 1}</p>
-                <p className="text-xs text-gray-400">Categories</p>
-              </div>
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-white leading-tight mb-2">
+                Your Wellness,<br className="hidden sm:block" /> Our Priority
+              </h1>
+              <p className="text-red-100 text-sm sm:text-base max-w-md">
+                {loading
+                  ? 'Loading premium products…'
+                  : `Explore ${products.length} premium health & wellness products curated just for you.`}
+              </p>
             </div>
-          )}
+
+            {/* Right: stats */}
+            {!loading && (
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-5 py-4 text-center border border-white/30">
+                  <p className="text-2xl font-extrabold text-white">{products.length}</p>
+                  <p className="text-xs text-red-100 font-medium mt-0.5">Products</p>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-5 py-4 text-center border border-white/30">
+                  <p className="text-2xl font-extrabold text-white">{categories.length - 1}</p>
+                  <p className="text-xs text-red-100 font-medium mt-0.5">Categories</p>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-5 py-4 text-center border border-white/30">
+                  <p className="text-2xl font-extrabold text-white">AI</p>
+                  <p className="text-xs text-red-100 font-medium mt-0.5">Powered</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Search Bar */}

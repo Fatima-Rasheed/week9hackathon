@@ -10,6 +10,10 @@ import {
   ShoppingBag,
   Sparkles,
   ChevronDown,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { ChatMessage, Product } from '@/types';
@@ -34,6 +38,15 @@ export default function ChatBot() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // ── Voice states ─────────────────────────────────────────────────────────────
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false); // Auto-listen mode
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +60,27 @@ export default function ChatBot() {
     }
   }, [isOpen]);
 
+  // ── Auto-start recording when voice mode is enabled ───────────────────────────
+  useEffect(() => {
+    if (voiceMode && isOpen && !isRecording && !loading && !isTranscribing) {
+      startRecording();
+    }
+    if (!voiceMode && isRecording) {
+      stopRecording();
+    }
+  }, [voiceMode, isOpen]);
+
+  // ── Text-to-Speech helper ─────────────────────────────────────────────────────
+  const speak = (text: string) => {
+    if (!ttsEnabled || typeof window === 'undefined') return;
+    window.speechSynthesis.cancel(); // Cancel any ongoing speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // ── Send message ──────────────────────────────────────────────────────────────
   const sendMessage = async (text?: string) => {
     const messageText = text || input.trim();
     if (!messageText || loading) return;
@@ -62,7 +96,6 @@ export default function ChatBot() {
     setLoading(true);
 
     try {
-      // Build history (exclude the initial greeting)
       const history = messages
         .filter((_, i) => i > 0)
         .map((m) => ({ role: m.role, content: m.content }));
@@ -80,12 +113,21 @@ export default function ChatBot() {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Speak the reply if TTS is enabled
+      speak(data.reply);
+
+      // Voice mode: auto listen again after bot replies
+      if (voiceMode) {
+        setTimeout(() => startRecording(), 1000);
+      }
     } catch (error) {
+      const errMsg = "I'm having trouble connecting right now. Please try again in a moment.";
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: "I'm having trouble connecting right now. Please try again in a moment.",
+          content: errMsg,
           timestamp: new Date(),
         },
       ]);
@@ -98,6 +140,82 @@ export default function ChatBot() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  // ── Start recording ───────────────────────────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4',
+      });
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks to release mic
+        stream.getTracks().forEach((track) => track.stop());
+        await handleAudioStop();
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Microphone access denied:', err);
+      alert('Please allow microphone access to use voice input.');
+    }
+  };
+
+  // ── Stop recording ────────────────────────────────────────────────────────────
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  // ── Send audio to backend → Groq Whisper ─────────────────────────────────────
+  const handleAudioStop = async () => {
+    setIsTranscribing(true);
+
+    try {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const ext = mimeType === 'audio/webm' ? 'webm' : 'mp4';
+
+      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+      const formData = new FormData();
+      formData.append('file', audioBlob, `voice-query.${ext}`);
+
+      const { data } = await api.post('/chat/speech-to-text', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (data.text) {
+        setInput(data.text); // Put transcribed text in input box
+        inputRef.current?.focus();
+      }
+    } catch (error) {
+      console.error('Transcription failed:', error);
+      alert('Voice transcription failed. Please try again or type your query.');
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  // ── Toggle mic button ─────────────────────────────────────────────────────────
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
     }
   };
 
@@ -121,9 +239,12 @@ export default function ChatBot() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 w-96 h-[600px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col z-50 animate-slide-in overflow-hidden">
+        <div
+          className="fixed bottom-24 right-6 w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col z-50 animate-slide-in overflow-hidden"
+          style={{ height: 'min(600px, calc(100vh - 96px))', maxHeight: 'calc(100vh - 96px)' }}
+        >
           {/* Header */}
-          <div className="bg-linear-to-r from-red-500 to-red-500 p-4 flex items-center justify-between">
+          <div className="bg-red-500 p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center">
                 <Bot className="w-5 h-5 text-white" />
@@ -136,12 +257,47 @@ export default function ChatBot() {
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="text-white/80 hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+
+            <div className="flex items-center gap-2">
+              {/* Voice Mode Toggle */}
+              <button
+                onClick={() => {
+                  setVoiceMode((prev) => !prev);
+                  if (isRecording) stopRecording();
+                }}
+                className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+                  voiceMode
+                    ? 'bg-white text-red-500'
+                    : 'bg-white/20 text-white hover:bg-white/30'
+                }`}
+                title="Toggle Voice Mode"
+              >
+                {voiceMode ? '🎤 Voice ON' : '🎤 Voice OFF'}
+              </button>
+
+              {/* TTS Toggle */}
+              <button
+                onClick={() => {
+                  setTtsEnabled((prev) => !prev);
+                  window.speechSynthesis.cancel();
+                }}
+                className="text-white/80 hover:text-white transition-colors"
+                title={ttsEnabled ? 'Disable voice response' : 'Enable voice response'}
+              >
+                {ttsEnabled ? (
+                  <Volume2 className="w-4 h-4" />
+                ) : (
+                  <VolumeX className="w-4 h-4" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsOpen(false)}
+                className="text-white/80 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -156,9 +312,7 @@ export default function ChatBot() {
                 {/* Avatar */}
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                    msg.role === 'user'
-                      ? 'bg-red-500'
-                      : 'bg-linear-to-br from-red-400 to-red-500'
+                    msg.role === 'user' ? 'bg-red-500' : 'bg-red-400'
                   }`}
                 >
                   {msg.role === 'user' ? (
@@ -168,7 +322,11 @@ export default function ChatBot() {
                   )}
                 </div>
 
-                <div className={`max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-2`}>
+                <div
+                  className={`max-w-[75%] ${
+                    msg.role === 'user' ? 'items-end' : 'items-start'
+                  } flex flex-col gap-2`}
+                >
                   {/* Message bubble */}
                   <div
                     className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${
@@ -196,18 +354,22 @@ export default function ChatBot() {
               </div>
             ))}
 
-            {/* Typing indicator */}
-            {loading && (
+            {/* Typing / transcribing indicator */}
+            {(loading || isTranscribing) && (
               <div className="flex gap-2 animate-fade-in">
-                <div className="w-7 h-7 rounded-full bg-linear-to-br from-red-400 to-red-500 flex items-center justify-center shrink-0">
+                <div className="w-7 h-7 rounded-full bg-red-400 flex items-center justify-center shrink-0">
                   <Bot className="w-4 h-4 text-white" />
                 </div>
                 <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-tl-sm">
-                  <div className="flex gap-1 items-center">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
-                    <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
-                  </div>
+                  {isTranscribing ? (
+                    <p className="text-xs text-gray-500">Transcribing audio...</p>
+                  ) : (
+                    <div className="flex gap-1 items-center">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
+                      <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
+                      <div className="w-2 h-2 bg-gray-400 rounded-full typing-dot" />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -232,8 +394,18 @@ export default function ChatBot() {
             </div>
           )}
 
-          {/* Input */}
+          {/* Input area */}
           <div className="p-4 border-t border-gray-100">
+            {/* Recording status banner */}
+            {isRecording && (
+              <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-xs text-red-600 font-medium">
+                  Recording... tap mic to stop
+                </span>
+              </div>
+            )}
+
             <div className="flex gap-2 items-center bg-gray-50 rounded-xl border border-gray-200 px-3 py-2 focus-within:border-red-400 focus-within:ring-1 focus-within:ring-red-200 transition-all">
               <input
                 ref={inputRef}
@@ -241,13 +413,39 @@ export default function ChatBot() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about health products..."
+                placeholder={
+                  isRecording
+                    ? 'Listening...'
+                    : isTranscribing
+                    ? 'Transcribing...'
+                    : 'Ask about health products...'
+                }
                 className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none"
-                disabled={loading}
+                disabled={loading || isRecording || isTranscribing}
               />
+
+              {/* Mic button */}
+              <button
+                onClick={toggleRecording}
+                disabled={loading || isTranscribing}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
+                  isRecording
+                    ? 'bg-red-500 text-white animate-pulse'
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-600 disabled:opacity-40'
+                }`}
+                title={isRecording ? 'Stop recording' : 'Start voice input'}
+              >
+                {isRecording ? (
+                  <MicOff className="w-4 h-4" />
+                ) : (
+                  <Mic className="w-4 h-4" />
+                )}
+              </button>
+
+              {/* Send button */}
               <button
                 onClick={() => sendMessage()}
-                disabled={!input.trim() || loading}
+                disabled={!input.trim() || loading || isRecording || isTranscribing}
                 className="w-8 h-8 bg-red-500 hover:bg-red-600 disabled:bg-gray-200 text-white rounded-lg flex items-center justify-center transition-colors shrink-0"
               >
                 <Send className="w-4 h-4" />

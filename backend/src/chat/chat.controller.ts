@@ -1,4 +1,14 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 import { ChatService } from './chat.service';
 import { ChatDto } from './dto/chat.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -11,5 +21,24 @@ export class ChatController {
   @Post('message')
   async sendMessage(@Body() chatDto: ChatDto) {
     return this.chatService.chat(chatDto);
+  }
+
+  @Post('speech-to-text')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads/audio',
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `audio-${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+      limits: {
+        fileSize: 25 * 1024 * 1024, // 25MB max (Groq Whisper limit)
+      },
+    }),
+  )
+  async transcribeAudio(@UploadedFile() file: Express.Multer.File) {
+    return this.chatService.transcribeAudio(file);
   }
 }

@@ -34,17 +34,18 @@ export default function Navbar() {
 
   return (
     <>
-    <nav className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
+    <nav className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-red-500 rounded-xl flex items-center justify-center shadow-sm shadow-red-200">
+            <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-rose-600 rounded-xl flex items-center justify-center shadow-md shadow-red-200">
               <Heart className="w-5 h-5 text-white" fill="white" />
             </div>
-            <div>
-              <span className="font-bold text-gray-900 text-lg">HealthCare</span>
-              <span className="text-red-500 font-bold text-lg"> Store</span>
+            <div className="leading-tight">
+              <span className="font-extrabold text-gray-900 text-xl tracking-tight">Health</span>
+              <span className="text-red-500 font-extrabold text-xl tracking-tight">Care</span>
+              <span className="ml-1 text-xs font-semibold text-gray-400 uppercase tracking-widest align-middle">Store</span>
             </div>
           </div>
 
