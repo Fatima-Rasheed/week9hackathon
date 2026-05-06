@@ -4,9 +4,16 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import Groq from 'groq-sdk';
 import * as fs from 'fs';
+import * as path from 'path';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
-import { VoiceQuery,VoiceQueryDocument } from './voice-query.schema';
+import { VoiceQuery, VoiceQueryDocument } from './schemas/voice-query.schema';
+import { SymptomQuery, SymptomQueryDocument } from './schemas/symptom-query.schema';
 import { ChatDto } from './dto/chat.dto';
+
+// ─── Load symptom mapping from JSON file ──────────────────────────────────────
+const SYMPTOM_MAPPING: Record<string, string[]> = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'symptom-mapping.json'), 'utf-8'),
+);
 
 interface SuggestedProduct {
   _id: string;
@@ -15,13 +22,20 @@ interface SuggestedProduct {
   price: number;
   imageUrl: string;
   description: string;
-  reason?: string;
 }
 
 export interface ChatResponse {
   reply: string;
   suggestedProducts: SuggestedProduct[];
   intent: string;
+}
+
+export interface SymptomResponse {
+  reply: string;
+  suggestedProducts: SuggestedProduct[];
+  confidence: number;
+  followUpQuestion: string | null;
+  matchedSymptoms: string[];
 }
 
 export interface TranscriptionResponse {
@@ -35,6 +49,7 @@ export class ChatService {
   constructor(
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     @InjectModel(VoiceQuery.name) private voiceQueryModel: Model<VoiceQueryDocument>,
+    @InjectModel(SymptomQuery.name) private symptomQueryModel: Model<SymptomQueryDocument>,
     private configService: ConfigService,
   ) {
     this.groq = new Groq({
@@ -42,74 +57,264 @@ export class ChatService {
     });
   }
 
-  // ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
-  async transcribeAudio(file: Express.Multer.File): Promise<TranscriptionResponse> {
+  // ─── Symptom Checker ──────────────────────────────────────────────────────────
+  async analyzeSymptoms(symptoms: string): Promise<SymptomResponse> {
     try {
-      const transcription = await this.groq.audio.transcriptions.create({
-        file: fs.createReadStream(file.path),
-        model: 'whisper-large-v3',
-        response_format: 'json',
-        language: 'en', // Change to 'ur' for Urdu, or remove for auto-detect
-      });
+      // Step 1: AI se symptoms extract karo
+      const symptomResult = await this.extractSymptoms(symptoms);
 
-      // Save voice query to MongoDB for analytics
-      await this.voiceQueryModel.create({
-        transcribedText: transcription.text,
-        inputType: 'voice',
-      });
+      // Step 2: Confidence check — agar low hai to follow-up poochho
+      if (symptomResult.confidence < 50) {
+        // Analytics mein save karo (follow-up case)
+        await this.symptomQueryModel.create({
+          originalText: symptoms,
+          extractedSymptoms: symptomResult.extractedSymptoms,
+          matchedCategories: [],
+          confidence: symptomResult.confidence,
+          inputType: 'text',
+          hadFollowUp: true,
+        });
 
-      // Clean up uploaded file after transcription
-      fs.unlink(file.path, (err) => {
-        if (err) console.error('Failed to delete audio file:', err);
-      });
-
-      return { text: transcription.text };
-    } catch (error) {
-      console.error('Transcription error:', error);
-
-      // Clean up file even on error
-      if (file?.path) {
-        fs.unlink(file.path, () => {});
+        return {
+          reply: "I want to make sure I give you the right recommendations.",
+          suggestedProducts: [],
+          confidence: symptomResult.confidence,
+          followUpQuestion: symptomResult.followUpQuestion,
+          matchedSymptoms: [],
+        };
       }
 
-      throw new Error('Failed to transcribe audio. Please try again.');
+      // Step 3: Symptom mapping se categories nikalo
+      const matchedCategories = this.mapSymptomsToCategories(symptomResult.extractedSymptoms);
+
+      // Step 4: MongoDB se products dhundo
+      const products = await this.fetchProductsByCategories(matchedCategories);
+
+      // Step 5: AI se explanation banao
+      const reply = await this.generateSymptomResponse(
+        symptoms,
+        symptomResult.extractedSymptoms,
+        products,
+      );
+
+      // Step 6: Analytics mein save karo
+      await this.symptomQueryModel.create({
+        originalText: symptoms,
+        extractedSymptoms: symptomResult.extractedSymptoms,
+        matchedCategories,
+        confidence: symptomResult.confidence,
+        inputType: 'text',
+        hadFollowUp: false,
+      });
+
+      return {
+        reply,
+        suggestedProducts: products.slice(0, 5).map((p) => ({
+          _id: (p._id as any).toString(),
+          name: p.name,
+          category: p.category,
+          price: p.price,
+          imageUrl: p.imageUrl,
+          description: p.description,
+        })),
+        confidence: symptomResult.confidence,
+        followUpQuestion: null,
+        matchedSymptoms: symptomResult.extractedSymptoms,
+      };
+    } catch (error) {
+      console.error('Symptom checker error:', error);
+      return {
+        reply: "I'm having trouble analyzing your symptoms. Please try again.",
+        suggestedProducts: [],
+        confidence: 0,
+        followUpQuestion: null,
+        matchedSymptoms: [],
+      };
     }
   }
 
-  // ─── Chat ─────────────────────────────────────────────────────────────────────
+  // ─── Step 1: AI se symptoms extract karo ─────────────────────────────────────
+  private async extractSymptoms(text: string): Promise<{
+    extractedSymptoms: string[];
+    confidence: number;
+    followUpQuestion: string | null;
+  }> {
+    const completion = await this.groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a healthcare symptom analyzer. Extract symptoms from user text and return ONLY valid JSON:
+{
+  "extractedSymptoms": ["symptom1", "symptom2"],
+  "confidence": 0-100,
+  "followUpQuestion": "question if needed or null"
+}
+
+Rules:
+- extractedSymptoms: list of specific symptoms (use simple terms like "tired", "hair fall", "weak bones")
+- confidence: how clear the symptoms are (0-100). Low if vague like "I feel bad"
+- followUpQuestion: ask only if confidence < 50 and symptoms are unclear. null if clear enough.
+
+Example symptoms to extract: tired, fatigue, hair fall, hair loss, weak bones, stress, anxiety, sleep, joint pain, digestion, skin, dizziness, low energy, memory, focus`,
+        },
+        { role: 'user', content: text },
+      ],
+      temperature: 0.2,
+      max_tokens: 200,
+    });
+
+    try {
+      const raw = completion.choices[0].message.content?.trim() || '{}';
+      const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch {
+      return { extractedSymptoms: [text], confidence: 60, followUpQuestion: null };
+    }
+  }
+
+  // ─── Step 2: Symptoms ko categories mein map karo ────────────────────────────
+  private mapSymptomsToCategories(symptoms: string[]): string[] {
+    const categories = new Set<string>();
+
+    symptoms.forEach((symptom) => {
+      const lowerSymptom = symptom.toLowerCase();
+
+      // Direct match
+      if (SYMPTOM_MAPPING[lowerSymptom]) {
+        SYMPTOM_MAPPING[lowerSymptom].forEach((cat) => categories.add(cat));
+        return;
+      }
+
+      // Partial match
+      Object.keys(SYMPTOM_MAPPING).forEach((key) => {
+        if (lowerSymptom.includes(key) || key.includes(lowerSymptom)) {
+          SYMPTOM_MAPPING[key].forEach((cat) => categories.add(cat));
+        }
+      });
+    });
+
+    return Array.from(categories);
+  }
+
+  // ─── Step 3: Categories se MongoDB products dhundo ───────────────────────────
+  private async fetchProductsByCategories(categories: string[]): Promise<ProductDocument[]> {
+    if (categories.length === 0) return [];
+    const regexPatterns = categories.map((cat) => new RegExp(cat, 'i'));
+
+    return this.productModel
+      .find({
+        $or: [
+          { category: { $in: regexPatterns } },
+          { name: { $in: regexPatterns } },
+          { tags: { $in: regexPatterns } },
+          { aiKeywords: { $in: regexPatterns } },
+        ],
+      })
+      .limit(5)
+      .exec();
+  }
+
+  // ─── Step 4: AI se symptom response banao ────────────────────────────────────
+  private async generateSymptomResponse(
+    originalText: string,
+    symptoms: string[],
+    products: ProductDocument[],
+  ): Promise<string> {
+    const productContext =
+      products.length > 0
+        ? `\nAvailable products:\n${products
+            .map((p, i) => `${i + 1}. ${p.name} (${p.category}) - $${p.price}`)
+            .join('\n')}`
+        : '\nNo specific products found, suggest general categories.';
+
+    const completion = await this.groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a caring healthcare advisor. A user described symptoms and you must suggest supplements.
+
+Guidelines:
+- Start with empathy: acknowledge their symptoms
+- Explain WHY each supplement helps their specific symptoms
+- Keep it concise (3-5 sentences max)
+- End with: "Please consult a healthcare professional before starting any supplement."
+- Do NOT repeat product names more than once
+${productContext}`,
+        },
+        {
+          role: 'user',
+          content: `My symptoms: ${originalText}\nExtracted symptoms: ${symptoms.join(', ')}`,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 400,
+    });
+
+    return (
+      completion.choices[0].message.content ||
+      'Based on your symptoms, I recommend consulting a healthcare professional.'
+    );
+  }
+
+  // ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
+// ─── Speech-to-Text using Groq Whisper ───────────────────────────────────────
+async transcribeAudio(file: Express.Multer.File): Promise<TranscriptionResponse> {
+  try {
+    const transcription = await this.groq.audio.transcriptions.create({
+      file: fs.createReadStream(file.path),
+      model: 'whisper-large-v3',
+      response_format: 'json',
+      language: 'en',
+    });
+
+    const transcribedText = transcription.text?.trim();
+
+    // ── Sirf save karo agar text empty nahi hai ──
+    if (transcribedText) {
+      await this.voiceQueryModel.create({
+        transcribedText,
+        inputType: 'voice',
+      });
+    }
+
+    fs.unlink(file.path, (err) => {
+      if (err) console.error('Failed to delete audio file:', err);
+    });
+
+    return { text: transcribedText || '' };
+  } catch (error) {
+    console.error('Transcription error:', error);
+    if (file?.path) fs.unlink(file.path, () => {});
+    throw new Error('Failed to transcribe audio. Please try again.');
+  }
+}
+
+  // ─── General Chat ─────────────────────────────────────────────────────────────
   async chat(chatDto: ChatDto): Promise<ChatResponse> {
     const { message, history = [] } = chatDto;
 
     try {
-      // Node 1: Classify intent and extract product search keywords
       const intentResult = await this.classifyIntent(message);
 
-      // Node 2: Fetch relevant products from DB if it's a product recommendation request
       let relevantProducts: ProductDocument[] = [];
       if (intentResult.isProductQuery) {
         relevantProducts = await this.fetchRelevantProducts(intentResult.keywords);
       }
 
-      // Node 3: Generate response with product context
-      const response = await this.generateResponse(
-        message,
-        history,
-        relevantProducts,
-        intentResult.intent,
-      );
-
-      const suggestedProducts = relevantProducts.slice(0, 5).map((p) => ({
-        _id: (p._id as any).toString(),
-        name: p.name,
-        category: p.category,
-        price: p.price,
-        imageUrl: p.imageUrl,
-        description: p.description,
-      }));
+      const response = await this.generateResponse(message, history, relevantProducts, intentResult.intent);
 
       return {
         reply: response,
-        suggestedProducts,
+        suggestedProducts: relevantProducts.slice(0, 5).map((p) => ({
+          _id: (p._id as any).toString(),
+          name: p.name,
+          category: p.category,
+          price: p.price,
+          imageUrl: p.imageUrl,
+          description: p.description,
+        })),
         intent: intentResult.intent,
       };
     } catch (error) {
@@ -208,10 +413,7 @@ ${productContext}`;
       model: 'llama-3.3-70b-versatile',
       messages: [
         { role: 'system', content: systemPrompt },
-        ...history.map((h) => ({
-          role: h.role as 'user' | 'assistant',
-          content: h.content,
-        })),
+        ...history.map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
         { role: 'user', content: message },
       ],
       temperature: 0.7,

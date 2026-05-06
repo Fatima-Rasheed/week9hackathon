@@ -18,11 +18,19 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
+  // ─── General Chat ─────────────────────────────────────────────────────────────
   @Post('message')
   async sendMessage(@Body() chatDto: ChatDto) {
     return this.chatService.chat(chatDto);
   }
 
+  // ─── Symptom Checker ──────────────────────────────────────────────────────────
+  @Post('symptom-checker')
+  async checkSymptoms(@Body() body: { symptoms: string }) {
+    return this.chatService.analyzeSymptoms(body.symptoms);
+  }
+
+  // ─── Speech to Text ───────────────────────────────────────────────────────────
   @Post('speech-to-text')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -34,7 +42,7 @@ export class ChatController {
         },
       }),
       limits: {
-        fileSize: 25 * 1024 * 1024, // 25MB max (Groq Whisper limit)
+        fileSize: 25 * 1024 * 1024,
       },
     }),
   )

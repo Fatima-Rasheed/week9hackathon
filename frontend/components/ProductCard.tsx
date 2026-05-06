@@ -43,7 +43,7 @@ export default function ProductCard({ product, highlight }: ProductCardProps) {
 
   return (
     <div
-      className={`bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border animate-fade-in flex flex-col ${
+      className={`bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border animate-fade-in flex flex-col h-full ${
         highlight ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-100'
       }`}
     >

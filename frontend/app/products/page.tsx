@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Search,
   Sparkles,
@@ -20,6 +21,10 @@ import Navbar from '@/components/Navbar';
 type SearchMode = 'normal' | 'ai';
 
 export default function ProductsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const initialHighlightId = searchParams.get('highlight');
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -29,7 +34,10 @@ export default function ProductsPage() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [categories, setCategories] = useState<string[]>(['All']);
   const [error, setError] = useState('');
+  const [highlightId, setHighlightId] = useState<string | null>(initialHighlightId);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   // Load all products and categories on mount
   useEffect(() => {
@@ -49,6 +57,31 @@ export default function ProductsPage() {
     };
     loadInitial();
   }, []);
+
+  // Scroll to highlighted product
+  useEffect(() => {
+    if (highlightId && !loading && highlightRef.current) {
+      setTimeout(() => {
+        highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
+    }
+  }, [highlightId, loading]);
+
+  // Clear highlight when clicking outside the highlighted product
+  useEffect(() => {
+    if (!highlightId) return;
+
+    const handleClick = (e: MouseEvent) => {
+      if (highlightRef.current && !highlightRef.current.contains(e.target as Node)) {
+        setHighlightId(null);
+        // Clean up the URL param without a full navigation
+        router.replace('/products', { scroll: false });
+      }
+    };
+
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [highlightId, router]);
 
   // Normal search with debounce
   useEffect(() => {
@@ -339,11 +372,20 @@ export default function ProductsPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
               {displayedProducts.map((product) => (
-                <ProductCard
+                <div
                   key={product._id}
-                  product={product}
-                  highlight={isAiResult}
-                />
+                  ref={product._id === highlightId ? highlightRef : null}
+                  className={`rounded-2xl transition-all duration-500 flex flex-col ${
+                    product._id === highlightId
+                      ? 'ring-2 ring-red-500 ring-offset-2 shadow-lg shadow-red-100'
+                      : ''
+                  }`}
+                >
+                  <ProductCard
+                    product={product}
+                    highlight={isAiResult || product._id === highlightId}
+                  />
+                </div>
               ))}
             </div>
           </>
